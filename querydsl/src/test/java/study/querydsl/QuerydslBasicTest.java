@@ -1,6 +1,13 @@
 package study.querydsl;
 
+import com.querydsl.core.BooleanBuilder;
 import com.querydsl.core.Tuple;
+import com.querydsl.core.types.ExpressionUtils;
+import com.querydsl.core.types.Predicate;
+import com.querydsl.core.types.Projections;
+import com.querydsl.core.types.dsl.BooleanExpression;
+import com.querydsl.core.types.dsl.Expressions;
+import com.querydsl.jpa.JPAExpressions;
 import com.querydsl.jpa.impl.JPAQueryFactory;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -11,6 +18,8 @@ import study.querydsl.domain.Member;
 import study.querydsl.domain.QMember;
 import study.querydsl.domain.QTeam;
 import study.querydsl.domain.Team;
+import study.querydsl.dto.MemberDto;
+import study.querydsl.dto.QMemberDto;
 
 import javax.persistence.EntityManager;
 
@@ -228,5 +237,242 @@ public class QuerydslBasicTest {
         for (Tuple tuple: result) {
             System.out.println(tuple);
         }
+    }
+
+    @Test
+    public void patchJoinNo() throws Exception{
+        //given
+        em.flush();
+        em.clear();
+
+        //when
+        Member findMember = query
+                .selectFrom(member)
+//                .join(member.team, team).fetchJoin()
+                .where(member.username.eq("member1"))
+                .fetchOne();
+
+        //then
+        System.out.println(findMember.getTeam().getName()); // 패치조인 안 했으면 select 쿼리 2번 나갔을 것
+    }
+
+    @Test
+    public void patchJoinUse() throws Exception{
+        //given
+        em.flush();
+        em.clear();
+
+        //when
+        Member findMember = query
+                .selectFrom(member)
+                .join(member.team, team).fetchJoin()
+                .where(member.username.eq("member1"))
+                .fetchOne();
+
+        //then
+        System.out.println(findMember.getTeam().getName());
+    }
+
+    // subQuery는 from 절에서는 사용할 수 없다.
+    @Test
+    public void subQuery() throws Exception{
+        //given
+        QMember memberSub = new QMember("memberSub");
+        List<Member> result = query
+                .selectFrom(member)
+                .where(member.age.eq(
+                        JPAExpressions
+                                .select(memberSub.age.max())
+                                .from(memberSub)
+                ))
+                .fetch();
+        //when
+        Member m = result.get(0);
+
+        //then
+        assertEquals(m.getAge(), 40);
+    }
+
+    @Test
+    public void subQueryGoe() throws Exception{
+        //given
+        QMember memberSub = new QMember("memberSub");
+        List<Member> result = query
+                .selectFrom(member)
+                .where(member.age.goe(
+                        JPAExpressions
+                                .select(memberSub.age.avg())
+                                .from(memberSub)
+                ))
+                .fetch();
+        //when
+
+        //then
+        for (Member m : result) {
+            assertTrue(m.getAge() >= 20);
+        }
+    }
+
+    @Test
+    public void findDtoBySetter() throws Exception{
+        //when
+        List<MemberDto> result = query
+                .select(Projections.bean(MemberDto.class, member.username, member.age))
+                .from(member)
+                .fetch();
+
+        //then
+        for (MemberDto memberDto : result) {
+            System.out.println(memberDto.getUsername());
+            System.out.println(memberDto.getAge());
+        }
+    }
+
+    @Test
+    public void findDtoByFields() throws Exception{
+        QMember memberSub = new QMember("memberSub");
+        //when
+        List<MemberDto> result = query
+                .select(Projections.fields(MemberDto.class, this.member.username,
+                        ExpressionUtils.as(JPAExpressions
+                                .select(memberSub.age.max())
+                                .from(memberSub), "age")
+                ))
+                .from(this.member)
+                .fetch();
+
+        //then
+        for (MemberDto memberDto : result) {
+            System.out.println(memberDto.getUsername());
+            System.out.println(memberDto.getAge());
+        }
+    }
+
+    @Test
+    public void findDtoByConstructor() throws Exception{
+        //when
+        List<MemberDto> result = query
+                .select(Projections.constructor(MemberDto.class, member.username, member.age))
+                .from(member)
+                .fetch();
+
+        //then
+        for (MemberDto memberDto : result) {
+            System.out.println(memberDto.getUsername());
+            System.out.println(memberDto.getAge());
+        }
+    }
+
+    @Test
+    public void findDtoByQueryProjection(){
+        //when
+        List<MemberDto> result = query
+                .select(new QMemberDto(member.username, member.age))
+                .from(member)
+                .fetch();
+
+        //then
+        for (MemberDto memberDto : result) {
+            System.out.println(memberDto);
+        }
+    }
+
+    @Test
+    public void dynamicQuery_BooleanBuilder() throws Exception{
+        //given
+        String usernameParam = "member1";
+        Integer ageParam = 10;
+
+        //when
+        List<Member> result = searchMember(usernameParam, ageParam);
+
+        //then
+        assertEquals(result.size(), 1);
+    }
+
+    private List<Member> searchMember(String usernameCond, Integer ageCond) {
+        BooleanBuilder builder = new BooleanBuilder();
+        if (usernameCond != null){
+            builder.and(member.username.eq(usernameCond));
+        }
+
+        if (ageCond != null){
+            builder.and(member.age.eq(ageCond));
+        }
+
+        return query
+                .selectFrom(member)
+                .where(builder)
+                .fetch();
+    }
+
+    @Test
+    public void dynamicQuery_WhereParam() throws Exception{
+        //given
+        String usernameParam = "member1";
+        Integer ageParam = 10;
+
+        //when
+        List<Member> result = searchMember2(usernameParam, ageParam);
+
+        //then
+        assertEquals(result.size(), 1);
+    }
+
+    private List<Member> searchMember2(String usernameCond, Integer ageCond) {
+        return query
+                .selectFrom(member)
+//                .where(usernameEq(usernameCond), ageEq(ageCond))
+                .where(allEq(usernameCond, ageCond))
+                .fetch();
+
+    }
+
+    private BooleanExpression usernameEq(String usernameCond) {
+        return usernameCond != null ? member.username.eq(usernameCond) : null;
+    }
+
+    private BooleanExpression ageEq(Integer ageCond) {
+        return ageCond != null ? member.age.eq(ageCond) : null;
+    }
+
+    private BooleanExpression allEq(String usernameCond, Integer ageCond){
+        return usernameEq(usernameCond).and(ageEq(ageCond));
+    }
+
+    @Test
+    public void bulkUpdate() throws Exception{ // 벌크연산은 영속성 컨텍스트 무시하고 db를 바꾼다.
+        //when
+        //멤버1과 멤버 2가 나이가 각각 10세 20세이므로 비회원으로 바뀐다.
+        long count = query
+                .update(member)
+                .set(member.username, "비회원")
+                .where(member.age.lt(28))
+                .execute();
+        //then
+        em.flush();
+        em.clear();
+
+    }
+
+    @Test
+    public void bulkAdd() throws Exception{
+        //when
+        long count = query
+                .update(member)
+                .set(member.age, member.age.add(1))
+                .execute();
+        //then
+    }
+
+    @Test
+    public void bulkDelete() throws Exception{
+        //when
+        long count = query
+                .delete(member)
+                .where(member.age.gt(18))
+                .execute();
+
+        //then
     }
 }
